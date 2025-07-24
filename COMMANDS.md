@@ -97,7 +97,7 @@ cast send $POLYGON_ZKEVM_BRIDGE_L1 \
 # 3. Get proof data
 DEPOSIT_COUNT=$(aggsandbox show bridges --network-id 1 | jq -r '.bridges[0].deposit_count')
 LEAF_INDEX=$(aggsandbox show l1-info-tree-index --network-id 1 --deposit-count $DEPOSIT_COUNT | jq -r '.l1_info_tree_index')
-PROOF_DATA=$(aggsandbox show claim-proof --network-id 1 --leaf-index $LEAF_INDEX --deposit-count $DEPOSIT_COUNT)
+PROOF_DATA=$(aggsandbox show claim-proof --network-id 1 --leaf-index $LEAF_INDEX --deposit-count $DEPOSIT_COUNT | sed -n '/^{/,/^}/p')
 
 # 4. Extract proof values
 MAINNET_EXIT_ROOT=$(echo $PROOF_DATA | jq -r '.l1_info_tree_leaf.mainnet_exit_root')
