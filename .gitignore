@@ -9,3 +9,6 @@ cli/target/
 # Claude Code configuration files
 CLAUDE.md
 .claude/
+
+out/
+cache/
