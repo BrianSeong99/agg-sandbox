@@ -70,19 +70,19 @@ record_test_result() {
     
     if [ "$expected_to_fail" = "true" ]; then
         if [ "$actual_result" = "1" ]; then
-            print_success " Test '$test_name' failed as expected"
+            print_success "✓ Test '$test_name' failed as expected"
             ((PASSED_TESTS++))
             ((EXPECTED_FAILURES++))
         else
-            print_error " Test '$test_name' succeeded but was expected to fail"
+            print_error "✗ Test '$test_name' succeeded but was expected to fail"
             ((FAILED_TESTS++))
         fi
     else
         if [ "$actual_result" = "0" ]; then
-            print_success " Test '$test_name' passed"
+            print_success "✓ Test '$test_name' passed"
             ((PASSED_TESTS++))
         else
-            print_error " Test '$test_name' failed unexpectedly"
+            print_error "✗ Test '$test_name' failed unexpectedly"
             ((FAILED_TESTS++))
         fi
     fi
@@ -93,26 +93,50 @@ print_info "========== L1 TO L2 BRIDGE AND CALL ERROR TEST SUITE =========="
 print_info "This suite tests error conditions for bridge and call operations"
 echo ""
 
+# Deploy receiver contract on L2 for testing
+print_step "Deploying bridge-and-call receiver contract on L2"
+DEPLOY_TX=$(forge create test/contracts/SimpleBridgeAndCallReceiver.sol:SimpleBridgeAndCallReceiver \
+    --rpc-url $RPC_2 \
+    --private-key $PRIVATE_KEY_1 \
+    --json 2>/dev/null | jq -r '.deployedTo')
+
+if [ -z "$DEPLOY_TX" ] || [ "$DEPLOY_TX" = "null" ]; then
+    print_error "Failed to deploy receiver contract"
+    exit 1
+fi
+
+RECEIVER_CONTRACT=$DEPLOY_TX
+print_success "Receiver contract deployed at: $RECEIVER_CONTRACT"
+echo ""
+
 # Test 1: Bridge with invalid call data
 print_test "Test 1: Bridge with malformed call data"
 # Create invalid call data (not properly encoded)
 INVALID_CALL_DATA="0x1234567890"  # Random hex, not a valid function call
 
-# First approve
+# First approve the bridge extension
 cast send $AGG_ERC20_L1 \
     "approve(address,uint256)" \
-    $POLYGON_ZKEVM_BRIDGE_L1 10 \
+    $BRIDGE_EXTENSION_L1 10 \
     --private-key $PRIVATE_KEY_1 \
     --rpc-url $RPC_1 > /dev/null 2>&1
 
-RESULT=$(cast send $POLYGON_ZKEVM_BRIDGE_L1 \
-    "bridgeAsset(uint32,address,uint256,address,bool,bytes)" \
-    $CHAIN_ID_AGGLAYER_1 \
-    $ACCOUNT_ADDRESS_1 \
-    10 \
+# Get L2 token address
+L2_TOKEN=$(cast call $POLYGON_ZKEVM_BRIDGE_L2 \
+    "precalculatedWrapperAddress(uint32,address,string,string,uint8)" \
+    1 $AGG_ERC20_L1 "AggERC20" "AGGERC20" 18 \
+    --rpc-url $RPC_2)
+L2_TOKEN="0x$(echo $L2_TOKEN | sed 's/0x0*//' | tail -c 41)"
+
+RESULT=$(cast send $BRIDGE_EXTENSION_L1 \
+    "bridgeAndCall(address,uint256,uint32,address,address,bytes,bool)" \
     $AGG_ERC20_L1 \
-    true \
+    10 \
+    $CHAIN_ID_AGGLAYER_1 \
+    $RECEIVER_CONTRACT \
+    $ACCOUNT_ADDRESS_1 \
     $INVALID_CALL_DATA \
+    true \
     --private-key $PRIVATE_KEY_1 \
     --rpc-url $RPC_1 \
     --json 2>&1 || echo "FAILED")
@@ -127,17 +151,25 @@ echo ""
 
 # Test 2: Bridge without approval (with call data)
 print_test "Test 2: Bridge and call without token approval"
-CALL_DATA=$(cast abi-encode "transfer(address,uint256)" $ACCOUNT_ADDRESS_2 5)
+CALL_DATA=$(cast abi-encode "receiveTokensWithMessage(address,uint256,string)" $L2_TOKEN_ADDRESS 5 "Test message")
 UNAPPROVED_AMOUNT=999999999
 
-RESULT=$(cast send $POLYGON_ZKEVM_BRIDGE_L1 \
-    "bridgeAsset(uint32,address,uint256,address,bool,bytes)" \
-    $CHAIN_ID_AGGLAYER_1 \
-    $ACCOUNT_ADDRESS_1 \
-    $UNAPPROVED_AMOUNT \
+# Get L2 token address
+L2_TOKEN=$(cast call $POLYGON_ZKEVM_BRIDGE_L2 \
+    "precalculatedWrapperAddress(uint32,address,string,string,uint8)" \
+    1 $AGG_ERC20_L1 "AggERC20" "AGGERC20" 18 \
+    --rpc-url $RPC_2)
+L2_TOKEN="0x$(echo $L2_TOKEN | sed 's/0x0*//' | tail -c 41)"
+
+RESULT=$(cast send $BRIDGE_EXTENSION_L1 \
+    "bridgeAndCall(address,uint256,uint32,address,address,bytes,bool)" \
     $AGG_ERC20_L1 \
-    true \
+    $UNAPPROVED_AMOUNT \
+    $CHAIN_ID_AGGLAYER_1 \
+    $RECEIVER_CONTRACT \
+    $ACCOUNT_ADDRESS_1 \
     $CALL_DATA \
+    true \
     --private-key $PRIVATE_KEY_1 \
     --rpc-url $RPC_1 \
     --json 2>&1 || echo "FAILED")
@@ -157,18 +189,26 @@ LARGE_CALL_DATA=$(printf '0x%.0s00' {1..70000})
 # Approve first
 cast send $AGG_ERC20_L1 \
     "approve(address,uint256)" \
-    $POLYGON_ZKEVM_BRIDGE_L1 1 \
+    $BRIDGE_EXTENSION_L1 1 \
     --private-key $PRIVATE_KEY_1 \
     --rpc-url $RPC_1 > /dev/null 2>&1
 
-RESULT=$(cast send $POLYGON_ZKEVM_BRIDGE_L1 \
-    "bridgeAsset(uint32,address,uint256,address,bool,bytes)" \
-    $CHAIN_ID_AGGLAYER_1 \
-    $ACCOUNT_ADDRESS_1 \
-    1 \
+# Get L2 token address
+L2_TOKEN=$(cast call $POLYGON_ZKEVM_BRIDGE_L2 \
+    "precalculatedWrapperAddress(uint32,address,string,string,uint8)" \
+    1 $AGG_ERC20_L1 "AggERC20" "AGGERC20" 18 \
+    --rpc-url $RPC_2)
+L2_TOKEN="0x$(echo $L2_TOKEN | sed 's/0x0*//' | tail -c 41)"
+
+RESULT=$(cast send $BRIDGE_EXTENSION_L1 \
+    "bridgeAndCall(address,uint256,uint32,address,address,bytes,bool)" \
     $AGG_ERC20_L1 \
-    true \
+    1 \
+    $CHAIN_ID_AGGLAYER_1 \
+    $RECEIVER_CONTRACT \
+    $ACCOUNT_ADDRESS_1 \
     $LARGE_CALL_DATA \
+    true \
     --private-key $PRIVATE_KEY_1 \
     --rpc-url $RPC_1 \
     --json 2>&1 || echo "FAILED")
@@ -189,18 +229,26 @@ DANGEROUS_CALL=$(cast abi-encode "selfdestruct(address)" $ACCOUNT_ADDRESS_1)
 # Approve first
 cast send $AGG_ERC20_L1 \
     "approve(address,uint256)" \
-    $POLYGON_ZKEVM_BRIDGE_L1 5 \
+    $BRIDGE_EXTENSION_L1 5 \
     --private-key $PRIVATE_KEY_1 \
     --rpc-url $RPC_1 > /dev/null 2>&1
 
-RESULT=$(cast send $POLYGON_ZKEVM_BRIDGE_L1 \
-    "bridgeAsset(uint32,address,uint256,address,bool,bytes)" \
-    $CHAIN_ID_AGGLAYER_1 \
-    $ACCOUNT_ADDRESS_1 \
-    5 \
+# Get L2 token address
+L2_TOKEN=$(cast call $POLYGON_ZKEVM_BRIDGE_L2 \
+    "precalculatedWrapperAddress(uint32,address,string,string,uint8)" \
+    1 $AGG_ERC20_L1 "AggERC20" "AGGERC20" 18 \
+    --rpc-url $RPC_2)
+L2_TOKEN="0x$(echo $L2_TOKEN | sed 's/0x0*//' | tail -c 41)"
+
+RESULT=$(cast send $BRIDGE_EXTENSION_L1 \
+    "bridgeAndCall(address,uint256,uint32,address,address,bytes,bool)" \
     $AGG_ERC20_L1 \
-    true \
+    5 \
+    $CHAIN_ID_AGGLAYER_1 \
+    $RECEIVER_CONTRACT \
+    $ACCOUNT_ADDRESS_1 \
     $DANGEROUS_CALL \
+    true \
     --private-key $PRIVATE_KEY_1 \
     --rpc-url $RPC_1 \
     --json 2>&1 || echo "FAILED")
@@ -219,84 +267,202 @@ print_info "Creating a valid bridge and call..."
 
 # Approve and bridge with call data
 BRIDGE_AMOUNT=8
-CALL_DATA=$(cast abi-encode "transfer(address,uint256)" $ACCOUNT_ADDRESS_2 2)
+CALL_DATA=$(cast abi-encode "receiveTokensWithMessage(address,uint256,string)" $L2_TOKEN_ADDRESS 2 "Double claim test")
 
 cast send $AGG_ERC20_L1 \
     "approve(address,uint256)" \
-    $POLYGON_ZKEVM_BRIDGE_L1 $BRIDGE_AMOUNT \
+    $BRIDGE_EXTENSION_L1 $BRIDGE_AMOUNT \
     --private-key $PRIVATE_KEY_1 \
     --rpc-url $RPC_1 > /dev/null 2>&1
 
-BRIDGE_TX=$(cast send $POLYGON_ZKEVM_BRIDGE_L1 \
-    "bridgeAsset(uint32,address,uint256,address,bool,bytes)" \
-    $CHAIN_ID_AGGLAYER_1 \
-    $ACCOUNT_ADDRESS_1 \
-    $BRIDGE_AMOUNT \
+# Get L2 token address
+L2_TOKEN=$(cast call $POLYGON_ZKEVM_BRIDGE_L2 \
+    "precalculatedWrapperAddress(uint32,address,string,string,uint8)" \
+    1 $AGG_ERC20_L1 "AggERC20" "AGGERC20" 18 \
+    --rpc-url $RPC_2)
+L2_TOKEN="0x$(echo $L2_TOKEN | sed 's/0x0*//' | tail -c 41)"
+
+BRIDGE_TX=$(cast send $BRIDGE_EXTENSION_L1 \
+    "bridgeAndCall(address,uint256,uint32,address,address,bytes,bool)" \
     $AGG_ERC20_L1 \
-    true \
+    $BRIDGE_AMOUNT \
+    $CHAIN_ID_AGGLAYER_1 \
+    $RECEIVER_CONTRACT \
+    $ACCOUNT_ADDRESS_1 \
     $CALL_DATA \
+    true \
     --private-key $PRIVATE_KEY_1 \
     --rpc-url $RPC_1 \
     --json | jq -r '.transactionHash')
 
 print_info "Bridge TX: $BRIDGE_TX"
+
+# Verify bridge events were created
+print_debug "Checking bridge events..."
+BRIDGE_EVENTS=$(aggsandbox events --network-id 0 --bridge $POLYGON_ZKEVM_BRIDGE_L1 | extract_json)
+EVENT_COUNT=$(echo "$BRIDGE_EVENTS" | jq --arg tx "$BRIDGE_TX" '[.events[] | select(.transaction_hash == $tx)] | length')
+if [ $EVENT_COUNT -eq 2 ]; then
+    print_debug "Found $EVENT_COUNT bridge events (asset + message) as expected"
+fi
+
 print_info "Waiting for global exit root propagation (20s)..."
 sleep 20
 
 # Get bridge info
 BRIDGE_INFO=$(aggsandbox show bridges --network-id 1 | extract_json)
-MATCHING_BRIDGE=$(echo $BRIDGE_INFO | jq -r --arg tx "$BRIDGE_TX" '.bridges[] | select(.tx_hash == $tx)')
 
-if [ -z "$MATCHING_BRIDGE" ] || [ "$MATCHING_BRIDGE" = "null" ]; then
-    print_error "Could not find bridge transaction in API"
+# For bridge and call, we need to find both the asset bridge and the message bridge
+# The BridgeExtension creates two deposits: one for assets, one for the message
+print_info "Looking for bridge transactions created by our bridge and call..."
+
+# Find the asset bridge (leaf_type = 0)
+ASSET_BRIDGE=$(echo $BRIDGE_INFO | jq -r '.bridges[] | select(.leaf_type == 0)' | jq -s 'sort_by(.deposit_count) | .[-1]')
+
+# Find the message bridge (leaf_type = 1)
+MESSAGE_BRIDGE=$(echo $BRIDGE_INFO | jq -r '.bridges[] | select(.leaf_type == 1)' | jq -s 'sort_by(.deposit_count) | .[-1]')
+
+if [ -z "$MESSAGE_BRIDGE" ] || [ "$MESSAGE_BRIDGE" = "null" ]; then
+    print_error "Could not find message bridge transaction in API"
     record_test_result "Double bridge-and-call claim prevention" false 1
     echo ""
 else
-    DEPOSIT_COUNT=$(echo $MATCHING_BRIDGE | jq -r '.deposit_count')
-    METADATA=$(echo $MATCHING_BRIDGE | jq -r '.metadata')
+    # Extract values from both bridges
+    # Asset bridge details
+    ASSET_DEPOSIT_COUNT=$(echo $ASSET_BRIDGE | jq -r '.deposit_count')
+    ASSET_METADATA=$(echo $ASSET_BRIDGE | jq -r '.metadata')
     
-    # Get proof
-    PROOF_DATA=$(aggsandbox show claim-proof --network-id 1 --leaf-index $DEPOSIT_COUNT --deposit-count $DEPOSIT_COUNT | extract_json)
-    MAINNET_EXIT_ROOT=$(echo $PROOF_DATA | jq -r '.l1_info_tree_leaf.mainnet_exit_root')
-    ROLLUP_EXIT_ROOT=$(echo $PROOF_DATA | jq -r '.l1_info_tree_leaf.rollup_exit_root')
+    # Message bridge details  
+    MESSAGE_DEPOSIT_COUNT=$(echo $MESSAGE_BRIDGE | jq -r '.deposit_count')
+    MESSAGE_METADATA=$(echo $MESSAGE_BRIDGE | jq -r '.metadata')
+    MESSAGE_ORIGIN=$(echo $MESSAGE_BRIDGE | jq -r '.origin_address')
+    MESSAGE_DEST=$(echo $MESSAGE_BRIDGE | jq -r '.destination_address')
+    MESSAGE_AMOUNT=$(echo $MESSAGE_BRIDGE | jq -r '.amount')
     
-    # First claim (should succeed)
-    print_info "Attempting first claim..."
-    CLAIM1=$(cast send $POLYGON_ZKEVM_BRIDGE_L2 \
+    # Get L1 info tree index and proof for the asset first
+    LEAF_INDEX_ASSET=$(aggsandbox show l1-info-tree-index --network-id 1 --deposit-count $ASSET_DEPOSIT_COUNT | awk '/════════════════════════════════════════════════════════════/{if(p) print p; p=""} {p=$0} END{if(p && p ~ /^[0-9]+$/) print p}')
+    print_debug "Asset L1 info tree leaf index: $LEAF_INDEX_ASSET"
+    
+    PROOF_DATA_ASSET=$(aggsandbox show claim-proof --network-id 1 --leaf-index $LEAF_INDEX_ASSET --deposit-count $ASSET_DEPOSIT_COUNT | extract_json)
+    MAINNET_EXIT_ROOT=$(echo $PROOF_DATA_ASSET | jq -r '.l1_info_tree_leaf.mainnet_exit_root')
+    ROLLUP_EXIT_ROOT=$(echo $PROOF_DATA_ASSET | jq -r '.l1_info_tree_leaf.rollup_exit_root')
+    
+    # First claim the asset
+    print_info "Attempting first claim - Step 1: Asset..."
+    # Calculate global index with mainnet flag for network 1 (mainnet in this SDK)
+    GLOBAL_INDEX_ASSET=$(echo "$ASSET_DEPOSIT_COUNT + 18446744073709551616" | bc)
+    print_debug "Asset global index: $GLOBAL_INDEX_ASSET (deposit count: $ASSET_DEPOSIT_COUNT with mainnet flag)"
+    
+    # Extract asset details
+    ASSET_ORIGIN=$(echo $ASSET_BRIDGE | jq -r '.origin_address')
+    ASSET_DEST=$(echo $ASSET_BRIDGE | jq -r '.destination_address')  
+    ASSET_AMOUNT=$(echo $ASSET_BRIDGE | jq -r '.amount')
+    
+    CLAIM_ASSET=$(cast send $POLYGON_ZKEVM_BRIDGE_L2 \
         "claimAsset(uint256,bytes32,bytes32,uint32,address,uint32,address,uint256,bytes)" \
-        $DEPOSIT_COUNT \
+        $GLOBAL_INDEX_ASSET \
         $MAINNET_EXIT_ROOT \
         $ROLLUP_EXIT_ROOT \
         1 \
         $AGG_ERC20_L1 \
         $CHAIN_ID_AGGLAYER_1 \
-        $ACCOUNT_ADDRESS_1 \
-        $BRIDGE_AMOUNT \
-        $METADATA \
+        $ASSET_DEST \
+        $ASSET_AMOUNT \
+        $ASSET_METADATA \
         --private-key $PRIVATE_KEY_1 \
         --rpc-url $RPC_2 \
         --json 2>&1)
     
-    if echo "$CLAIM1" | jq -e '.transactionHash' > /dev/null 2>&1; then
-        print_info "First claim succeeded"
-        sleep 3
+    if ! echo "$CLAIM_ASSET" | jq -e '.transactionHash' > /dev/null 2>&1; then
+        print_error "Failed to claim asset"
+        record_test_result "Double bridge-and-call claim prevention" false 1
+        echo ""
+    else
+        CLAIM_ASSET_TX=$(echo "$CLAIM_ASSET" | jq -r '.transactionHash')
+        print_info "Asset claim TX: $CLAIM_ASSET_TX"
+        sleep 2
         
-        # Second claim (should fail)
-        print_info "Attempting second claim of same deposit..."
-        CLAIM2=$(cast send $POLYGON_ZKEVM_BRIDGE_L2 \
-            "claimAsset(uint256,bytes32,bytes32,uint32,address,uint32,address,uint256,bytes)" \
-            $DEPOSIT_COUNT \
+        # Now claim the message
+        print_info "Attempting first claim - Step 2: Message..."
+        
+        # Get fresh proof for message
+        LEAF_INDEX_MESSAGE=$(aggsandbox show l1-info-tree-index --network-id 1 --deposit-count $MESSAGE_DEPOSIT_COUNT | awk '/════════════════════════════════════════════════════════════/{if(p) print p; p=""} {p=$0} END{if(p && p ~ /^[0-9]+$/) print p}')
+        print_debug "Message L1 info tree leaf index: $LEAF_INDEX_MESSAGE"
+        
+        PROOF_DATA_MESSAGE=$(aggsandbox show claim-proof --network-id 1 --leaf-index $LEAF_INDEX_MESSAGE --deposit-count $MESSAGE_DEPOSIT_COUNT | extract_json)
+        MAINNET_EXIT_ROOT=$(echo $PROOF_DATA_MESSAGE | jq -r '.l1_info_tree_leaf.mainnet_exit_root')
+        ROLLUP_EXIT_ROOT=$(echo $PROOF_DATA_MESSAGE | jq -r '.l1_info_tree_leaf.rollup_exit_root')
+        
+        GLOBAL_INDEX_MESSAGE=$(echo "$MESSAGE_DEPOSIT_COUNT + 18446744073709551616" | bc)
+        print_debug "Message global index: $GLOBAL_INDEX_MESSAGE (deposit count: $MESSAGE_DEPOSIT_COUNT with mainnet flag)"
+        
+        CLAIM1=$(cast send $POLYGON_ZKEVM_BRIDGE_L2 \
+            "claimMessage(uint256,bytes32,bytes32,uint32,address,uint32,address,uint256,bytes)" \
+            $GLOBAL_INDEX_MESSAGE \
             $MAINNET_EXIT_ROOT \
             $ROLLUP_EXIT_ROOT \
-            1 \
-            $AGG_ERC20_L1 \
+            0 \
+            $MESSAGE_ORIGIN \
             $CHAIN_ID_AGGLAYER_1 \
-            $ACCOUNT_ADDRESS_1 \
-            $BRIDGE_AMOUNT \
-            $METADATA \
+            $MESSAGE_DEST \
+            $MESSAGE_AMOUNT \
+            $MESSAGE_METADATA \
             --private-key $PRIVATE_KEY_1 \
             --rpc-url $RPC_2 \
-            --json 2>&1 || echo "FAILED")
+            --json 2>&1)
+    
+    if echo "$CLAIM1" | jq -e '.transactionHash' > /dev/null 2>&1; then
+            CLAIM1_TX=$(echo "$CLAIM1" | jq -r '.transactionHash')
+            print_info "First message claim succeeded: $CLAIM1_TX"
+            sleep 3
+        
+        # Verify the bridge and call execution
+        print_debug "Verifying first claim execution..."
+        CLAIM1_RECEIPT=$(cast receipt $CLAIM1_TX --rpc-url $RPC_2 --json)
+        CLAIM1_STATUS=$(echo "$CLAIM1_RECEIPT" | jq -r '.status')
+        
+        if [ "$CLAIM1_STATUS" = "0x1" ]; then
+            print_success "✓ First claim executed successfully"
+            
+            # Verify claim events
+            print_debug "Verifying claim events..."
+            L2_EVENTS=$(aggsandbox events --network-id $CHAIN_ID_AGGLAYER_1 --bridge $POLYGON_ZKEVM_BRIDGE_L2 | extract_json)
+            ASSET_CLAIM=$(echo "$L2_EVENTS" | jq --arg tx "$CLAIM_ASSET_TX" '[.events[] | select(.transaction_hash == $tx and .event_name == "ClaimEvent")] | length')
+            MESSAGE_CLAIM=$(echo "$L2_EVENTS" | jq --arg tx "$CLAIM1_TX" '[.events[] | select(.transaction_hash == $tx and .event_name == "ClaimEvent")] | length')
+            
+            if [ $ASSET_CLAIM -gt 0 ] && [ $MESSAGE_CLAIM -gt 0 ]; then
+                print_debug "Found claim events: $ASSET_CLAIM asset claim(s), $MESSAGE_CLAIM message claim(s)"
+            fi
+            
+            # Check if call data was executed
+            if [ -n "$CALL_DATA" ] && [ "$CALL_DATA" != "0x" ] && [ "$CALL_DATA" != "0x00" ]; then
+                print_debug "Call data was included, checking execution..."
+                # Check receiver contract
+                CALL_COUNT=$(cast call $RECEIVER_CONTRACT "getCallCount()" --rpc-url $RPC_2)
+                CALL_COUNT_DEC=$(printf "%d" $CALL_COUNT 2>/dev/null || echo "0")
+                if [ $CALL_COUNT_DEC -gt 0 ]; then
+                    print_info "Receiver contract recorded $CALL_COUNT_DEC call(s)"
+                fi
+            fi
+        else
+            print_error "First claim reverted unexpectedly"
+        fi
+        
+        # Second claim (should fail) - try to claim the message again
+            print_info "Attempting second claim of same message..."
+            CLAIM2=$(cast send $POLYGON_ZKEVM_BRIDGE_L2 \
+                "claimMessage(uint256,bytes32,bytes32,uint32,address,uint32,address,uint256,bytes)" \
+                $GLOBAL_INDEX_MESSAGE \
+                $MAINNET_EXIT_ROOT \
+                $ROLLUP_EXIT_ROOT \
+                0 \
+                $MESSAGE_ORIGIN \
+                $CHAIN_ID_AGGLAYER_1 \
+                $MESSAGE_DEST \
+                $MESSAGE_AMOUNT \
+                $MESSAGE_METADATA \
+                --private-key $PRIVATE_KEY_1 \
+                --rpc-url $RPC_2 \
+                --json 2>&1 || echo "FAILED")
         
         if [[ "$CLAIM2" == *"FAILED"* ]] || [[ "$CLAIM2" == *"AlreadyClaimed"* ]] || [[ "$CLAIM2" == *"revert"* ]]; then
             record_test_result "Double bridge-and-call claim prevention" true 1
@@ -304,8 +470,9 @@ else
             record_test_result "Double bridge-and-call claim prevention" true 0
         fi
     else
-        print_info "First claim failed (might be GlobalExitRootInvalid)"
-        record_test_result "Double bridge-and-call claim prevention" false 1
+            print_info "First message claim failed (might be GlobalExitRootInvalid)"
+            record_test_result "Double bridge-and-call claim prevention" false 1
+        fi
     fi
 fi
 echo ""
@@ -324,16 +491,16 @@ print_info "Expected failures caught: $EXPECTED_FAILURES"
 
 echo ""
 print_info "Error conditions tested:"
-print_info "1.  Bridge with malformed call data"
-print_info "2.  Bridge and call without approval"
-print_info "3.  Excessive call data"
-print_info "4.  Bridge with dangerous call"
-print_info "5.  Double bridge-and-call claim prevention"
+print_info "1. ✓ Bridge with malformed call data"
+print_info "2. ✓ Bridge and call without approval"
+print_info "3. ✓ Excessive call data"
+print_info "4. ✓ Bridge with dangerous call"
+print_info "5. ✓ Double bridge-and-call claim prevention"
 
 echo ""
 echo ""
 if [ $FAILED_TESTS -eq 0 ]; then
-    print_success "All bridge and call error handling tests completed successfully! "
+    print_success "All bridge and call error handling tests completed successfully! ✅"
     exit 0
 else
     print_error "Some tests did not behave as expected"

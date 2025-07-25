@@ -226,7 +226,11 @@ echo ""
 # Step 6: Get claim proof
 print_step "6. Getting claim proof"
 
-PROOF_DATA=$(aggsandbox show claim-proof --network-id 1 --leaf-index $DEPOSIT_COUNT --deposit-count $DEPOSIT_COUNT | extract_json)
+# Get L1 info tree index first
+LEAF_INDEX=$(aggsandbox show l1-info-tree-index --network-id 1 --deposit-count $DEPOSIT_COUNT | awk '/════════════════════════════════════════════════════════════/{if(p) print p; p=""} {p=$0} END{if(p && p ~ /^[0-9]+$/) print p}')
+print_info "L1 info tree leaf index: $LEAF_INDEX"
+
+PROOF_DATA=$(aggsandbox show claim-proof --network-id 1 --leaf-index $LEAF_INDEX --deposit-count $DEPOSIT_COUNT | extract_json)
 
 if [ "$DEBUG" = "1" ]; then
     print_debug "Proof data:"

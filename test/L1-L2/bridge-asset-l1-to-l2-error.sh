@@ -200,19 +200,27 @@ BRIDGE_INFO=$(aggsandbox show bridges --network-id 1 | extract_json)
 MATCHING_BRIDGE=$(echo $BRIDGE_INFO | jq -r --arg tx "$BRIDGE_TX" '.bridges[] | select(.tx_hash == $tx)')
 DEPOSIT_COUNT=$(echo $MATCHING_BRIDGE | jq -r '.deposit_count')
 
+# Get L1 info tree index first
+LEAF_INDEX=$(aggsandbox show l1-info-tree-index --network-id 1 --deposit-count $DEPOSIT_COUNT | awk '/════════════════════════════════════════════════════════════/{if(p) print p; p=""} {p=$0} END{if(p && p ~ /^[0-9]+$/) print p}')
+print_debug "L1 info tree leaf index: $LEAF_INDEX"
+
 # Get proof
-PROOF_DATA=$(aggsandbox show claim-proof --network-id 1 --leaf-index $DEPOSIT_COUNT --deposit-count $DEPOSIT_COUNT | extract_json)
+PROOF_DATA=$(aggsandbox show claim-proof --network-id 1 --leaf-index $LEAF_INDEX --deposit-count $DEPOSIT_COUNT | extract_json)
 MAINNET_EXIT_ROOT=$(echo $PROOF_DATA | jq -r '.l1_info_tree_leaf.mainnet_exit_root')
 ROLLUP_EXIT_ROOT=$(echo $PROOF_DATA | jq -r '.l1_info_tree_leaf.rollup_exit_root')
 
 # First claim (should succeed)
 print_info "Attempting first claim..."
+# Calculate global index with mainnet flag for L1 origin
+GLOBAL_INDEX=$(echo "$DEPOSIT_COUNT + 18446744073709551616" | bc)
+print_debug "Global index: $GLOBAL_INDEX (deposit count: $DEPOSIT_COUNT with mainnet flag)"
+
 CLAIM1=$(cast send $POLYGON_ZKEVM_BRIDGE_L2 \
     "claimAsset(uint256,bytes32,bytes32,uint32,address,uint32,address,uint256,bytes)" \
-    $DEPOSIT_COUNT \
+    $GLOBAL_INDEX \
     $MAINNET_EXIT_ROOT \
     $ROLLUP_EXIT_ROOT \
-    1 \
+    0 \
     $AGG_ERC20_L1 \
     $CHAIN_ID_AGGLAYER_1 \
     $ACCOUNT_ADDRESS_2 \
@@ -230,10 +238,10 @@ if echo "$CLAIM1" | jq -e '.transactionHash' > /dev/null 2>&1; then
     print_info "Attempting second claim of same deposit..."
     CLAIM2=$(cast send $POLYGON_ZKEVM_BRIDGE_L2 \
         "claimAsset(uint256,bytes32,bytes32,uint32,address,uint32,address,uint256,bytes)" \
-        $DEPOSIT_COUNT \
+        $GLOBAL_INDEX \
         $MAINNET_EXIT_ROOT \
         $ROLLUP_EXIT_ROOT \
-        1 \
+        0 \
         $AGG_ERC20_L1 \
         $CHAIN_ID_AGGLAYER_1 \
         $ACCOUNT_ADDRESS_2 \
@@ -336,16 +344,22 @@ QUICK_MATCHING=$(echo $QUICK_BRIDGE_INFO | jq -r --arg tx "$QUICK_BRIDGE_TX" '.b
 
 if [ -n "$QUICK_MATCHING" ]; then
     QUICK_DEPOSIT=$(echo $QUICK_MATCHING | jq -r '.deposit_count')
-    QUICK_PROOF=$(aggsandbox show claim-proof --network-id 1 --leaf-index $QUICK_DEPOSIT --deposit-count $QUICK_DEPOSIT | extract_json)
+    # Get L1 info tree index for quick bridge
+    QUICK_LEAF_INDEX=$(aggsandbox show l1-info-tree-index --network-id 1 --deposit-count $QUICK_DEPOSIT | awk '/════════════════════════════════════════════════════════════/{if(p) print p; p=""} {p=$0} END{if(p && p ~ /^[0-9]+$/) print p}')
+    
+    QUICK_PROOF=$(aggsandbox show claim-proof --network-id 1 --leaf-index $QUICK_LEAF_INDEX --deposit-count $QUICK_DEPOSIT | extract_json)
     QUICK_MAINNET=$(echo $QUICK_PROOF | jq -r '.l1_info_tree_leaf.mainnet_exit_root')
     QUICK_ROLLUP=$(echo $QUICK_PROOF | jq -r '.l1_info_tree_leaf.rollup_exit_root')
     
+    # Calculate global index for quick claim
+    QUICK_GLOBAL_INDEX=$(echo "$QUICK_DEPOSIT + 18446744073709551616" | bc)
+    
     QUICK_CLAIM=$(cast send $POLYGON_ZKEVM_BRIDGE_L2 \
         "claimAsset(uint256,bytes32,bytes32,uint32,address,uint32,address,uint256,bytes)" \
-        $QUICK_DEPOSIT \
+        $QUICK_GLOBAL_INDEX \
         $QUICK_MAINNET \
         $QUICK_ROLLUP \
-        1 \
+        0 \
         $AGG_ERC20_L1 \
         $CHAIN_ID_AGGLAYER_1 \
         $ACCOUNT_ADDRESS_2 \

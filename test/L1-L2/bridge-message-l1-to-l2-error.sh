@@ -163,12 +163,16 @@ else
     
     if [ -n "$EOA_MATCHING" ]; then
         EOA_DEPOSIT=$(echo $EOA_MATCHING | jq -r '.deposit_count')
-        EOA_PROOF=$(aggsandbox show claim-proof --network-id 1 --leaf-index $EOA_DEPOSIT --deposit-count $EOA_DEPOSIT | extract_json)
+        
+        # Get L1 info tree index
+        EOA_LEAF_INDEX=$(aggsandbox show l1-info-tree-index --network-id 1 --deposit-count $EOA_DEPOSIT | awk '/════════════════════════════════════════════════════════════/{if(p) print p; p=""} {p=$0} END{if(p && p ~ /^[0-9]+$/) print p}')
+        
+        EOA_PROOF=$(aggsandbox show claim-proof --network-id 1 --leaf-index $EOA_LEAF_INDEX --deposit-count $EOA_DEPOSIT | extract_json)
         EOA_MAINNET=$(echo $EOA_PROOF | jq -r '.l1_info_tree_leaf.mainnet_exit_root')
         EOA_ROLLUP=$(echo $EOA_PROOF | jq -r '.l1_info_tree_leaf.rollup_exit_root')
         
-        # Calculate global index
-        EOA_GLOBAL_INDEX=$((EOA_DEPOSIT | (1 << 64)))
+        # Calculate global index with mainnet flag for L1 origin
+        EOA_GLOBAL_INDEX=$(echo "$EOA_DEPOSIT + 18446744073709551616" | bc)
         
         # Try to claim - should fail because EOA doesn't implement IBridgeMessageReceiver
         EOA_CLAIM=$(cast send $POLYGON_ZKEVM_BRIDGE_L2 \
@@ -310,15 +314,18 @@ else
     DEPOSIT_COUNT=$(echo $MATCHING_BRIDGE | jq -r '.deposit_count')
     print_debug "Deposit count: $DEPOSIT_COUNT"
 
-    # Get proof
-    PROOF_DATA=$(aggsandbox show claim-proof --network-id 1 --leaf-index $DEPOSIT_COUNT --deposit-count $DEPOSIT_COUNT | extract_json)
+    # Get L1 info tree index and proof
+    LEAF_INDEX=$(aggsandbox show l1-info-tree-index --network-id 1 --deposit-count $DEPOSIT_COUNT | awk '/════════════════════════════════════════════════════════════/{if(p) print p; p=""} {p=$0} END{if(p && p ~ /^[0-9]+$/) print p}')
+    print_debug "L1 info tree leaf index: $LEAF_INDEX"
+    
+    PROOF_DATA=$(aggsandbox show claim-proof --network-id 1 --leaf-index $LEAF_INDEX --deposit-count $DEPOSIT_COUNT | extract_json)
     MAINNET_EXIT_ROOT=$(echo $PROOF_DATA | jq -r '.l1_info_tree_leaf.mainnet_exit_root')
     ROLLUP_EXIT_ROOT=$(echo $PROOF_DATA | jq -r '.l1_info_tree_leaf.rollup_exit_root')
 
     # First claim (should succeed)
     print_info "Attempting first claim..."
-    # Calculate global index with mainnet flag
-    GLOBAL_INDEX=$((DEPOSIT_COUNT | (1 << 64)))
+    # Calculate global index with mainnet flag for L1 origin
+    GLOBAL_INDEX=$(echo "$DEPOSIT_COUNT + 18446744073709551616" | bc)
     
     CLAIM1=$(cast send $POLYGON_ZKEVM_BRIDGE_L2 \
         "claimMessage(uint256,bytes32,bytes32,uint32,address,uint32,address,uint256,bytes)" \
@@ -454,12 +461,16 @@ QUICK_MATCHING=$(echo $QUICK_BRIDGE_INFO | jq -r --arg tx "$QUICK_BRIDGE_TX" '.b
 
 if [ -n "$QUICK_MATCHING" ]; then
     QUICK_DEPOSIT=$(echo $QUICK_MATCHING | jq -r '.deposit_count')
-    QUICK_PROOF=$(aggsandbox show claim-proof --network-id 1 --leaf-index $QUICK_DEPOSIT --deposit-count $QUICK_DEPOSIT | extract_json)
+    
+    # Get L1 info tree index
+    QUICK_LEAF_INDEX=$(aggsandbox show l1-info-tree-index --network-id 1 --deposit-count $QUICK_DEPOSIT | awk '/════════════════════════════════════════════════════════════/{if(p) print p; p=""} {p=$0} END{if(p && p ~ /^[0-9]+$/) print p}')
+    
+    QUICK_PROOF=$(aggsandbox show claim-proof --network-id 1 --leaf-index $QUICK_LEAF_INDEX --deposit-count $QUICK_DEPOSIT | extract_json)
     QUICK_MAINNET=$(echo $QUICK_PROOF | jq -r '.l1_info_tree_leaf.mainnet_exit_root')
     QUICK_ROLLUP=$(echo $QUICK_PROOF | jq -r '.l1_info_tree_leaf.rollup_exit_root')
     
-    # Calculate global index with mainnet flag
-    QUICK_GLOBAL_INDEX=$((QUICK_DEPOSIT | (1 << 64)))
+    # Calculate global index with mainnet flag for L1 origin
+    QUICK_GLOBAL_INDEX=$(echo "$QUICK_DEPOSIT + 18446744073709551616" | bc)
     
     QUICK_CLAIM=$(cast send $POLYGON_ZKEVM_BRIDGE_L2 \
         "claimMessage(uint256,bytes32,bytes32,uint32,address,uint32,address,uint256,bytes)" \

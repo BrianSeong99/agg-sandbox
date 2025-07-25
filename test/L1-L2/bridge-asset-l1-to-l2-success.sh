@@ -167,9 +167,10 @@ fi
 
 # Step 5: Get L1 info tree index
 print_step "5. Getting L1 info tree index"
-# For sandbox, leaf_index equals deposit_count
-LEAF_INDEX=$DEPOSIT_COUNT
-print_info "Using leaf_index: $LEAF_INDEX (same as deposit_count in sandbox)"
+# Get the L1 info tree index for this deposit
+LEAF_INDEX=$(aggsandbox show l1-info-tree-index --network-id 1 --deposit-count $DEPOSIT_COUNT | awk '/════════════════════════════════════════════════════════════/{if(p) print p; p=""} {p=$0} END{if(p && p ~ /^[0-9]+$/) print p}')
+print_debug "L1 info tree leaf index: $LEAF_INDEX"
+print_info "Using leaf_index: $LEAF_INDEX (from L1 info tree for deposit_count: $DEPOSIT_COUNT)"
 
 # Step 6: Get claim proof
 print_step "6. Retrieving claim proof"
